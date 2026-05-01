@@ -6,7 +6,7 @@ app = Flask(__name__)
 # This is the secret word you will put in the Meta dashboard later
 VERIFY_TOKEN = "spaza_secret_123"
 
-@app.route('/webhook', methods=['GET'])
+@app.route('/webhook', methods=['GET', 'POST']
 def verify():
     # Meta sends a GET request to verify your bot
     token = request.args.get("hub.verify_token")
