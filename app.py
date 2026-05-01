@@ -1,87 +1,71 @@
 import os
 import sys
-from flask import Flask, request, render_template_string
+import requests
+from flask import Flask, request
 
 app = Flask(__name__)
 
-# The secret word for Meta
+# CONFIGURATION
 VERIFY_TOKEN = "spaza_secret_123"
+WHATSAPP_TOKEN = "PASTE_YOUR_TEMPORARY_ACCESS_TOKEN_HERE"
+PHONE_NUMBER_ID = "1159935663863682"
 
-# This list stores messages while the server is running
-messages_list = []
+# THE BRAIN: Your Shop Data
+PRICES = {
+    "bread": "R18.50",
+    "milk": "R16.00",
+    "eggs": "R30.00 (Dozen)",
+    "coke": "R15.00"
+}
+SPECIALS = "Today's Special: 2x Bread for R35!"
 
-# Dark Theme HTML Dashboard
-DASHBOARD_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>SpazaBot Dashboard</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; padding: 20px; }
-        h2 { color: #00e676; border-bottom: 2px solid #333; padding-bottom: 10px; }
-        .card { background: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 5px solid #00e676; }
-        .name { font-weight: bold; color: #bb86fc; }
-        .time { font-size: 0.8em; color: #757575; float: right; }
-        .msg { margin-top: 5px; color: #ffffff; }
-    </style>
-    <meta http-equiv="refresh" content="10"> <!-- Auto-refreshes every 10 seconds -->
-</head>
-<body>
-    <h2>Workshop Inbox</h2>
-    {% if not messages %}
-        <p>No messages yet. Waiting for customers...</p>
-    {% endif %}
-    {% for msg in messages %}
-        <div class="card">
-            <span class="name">{{ msg.name }} ({{ msg.num }})</span>
-            <div class="msg">{{ msg.text }}</div>
-        </div>
-    {% endfor %}
-</body>
-</html>
-"""
-
-@app.route('/')
-def dashboard():
-    # Shows the dark-themed page with all collected messages
-    return render_template_string(DASHBOARD_HTML, messages=messages_list)
+def send_whatsapp_message(to, text):
+    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+    data = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": text}
+    }
+    response = requests.post(url, headers=headers, json=data)
+    return response.status_code
 
 @app.route('/webhook', methods=['GET', 'POST'])
-def verify():
+def webhook():
     if request.method == 'GET':
-        token = request.args.get("hub.verify_token")
-        challenge = request.args.get("hub.challenge")
-        if token == VERIFY_TOKEN:
-            return challenge, 200
-        return "Verification failed", 403
+        if request.args.get("hub.verify_token") == VERIFY_TOKEN:
+            return request.args.get("hub.challenge"), 200
+        return "Failed", 403
 
     data = request.get_json()
     if data:
         try:
-            entry = data['entry'][0]
-            changes = entry['changes'][0]
-            value = changes['value']
+            entry = data['entry'][0]['changes'][0]['value']
+            if 'messages' in entry:
+                msg = entry['messages'][0]
+                customer_num = msg['from']
+                user_text = msg['text']['body'].lower().strip()
+
+                # LOGIC: What does the bot say?
+                reply = "Hi! Type 'Prices' for a list or 'Special' for today's deal."
+
+                if "price" in user_text:
+                    reply = "Our Prices:\n" + "\n".join([f"{k.capitalize()}: {v}" for k, v in PRICES.items()])
+                elif "special" in user_text:
+                    reply = SPECIALS
+                elif any(product in user_text for product in PRICES):
+                    for product in PRICES:
+                        if product in user_text:
+                            reply = f"The price for {product} is {PRICES[product]}."
+                
+                # SEND THE REPLY BACK
+                send_whatsapp_message(customer_num, reply)
+                print(f"Replied to {customer_num}", file=sys.stderr, flush=True)
+
+        except: pass
             
-            if 'messages' in value:
-                message_data = value['messages'][0]
-                sender_name = value['contacts'][0]['profile']['name']
-                sender_num = message_data['from']
-                message_text = message_data['text']['body']
-
-                # Save to our list (newest on top)
-                messages_list.insert(0, {
-                    "name": sender_name,
-                    "num": sender_num,
-                    "text": message_text
-                })
-
-                print(f"Captured message from {sender_name}", file=sys.stderr, flush=True)
-
-        except (KeyError, IndexError):
-            pass
-            
-    return "Message received", 200
+    return "OK", 200
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
